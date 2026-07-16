@@ -1027,63 +1027,266 @@ async function handleXE(page, source) {
     timeout: 60000,
   });
 
-  await page.waitForTimeout(6000);
+  await page.waitForTimeout(7000);
 
-  await page.getByRole("button", { name: /Accept/i }).click({ timeout: 5000 }).catch(() => {});
+  // Accept cookies if displayed.
+  await page
+    .getByRole("button", { name: /Accept|Accept all|Allow all/i })
+    .first()
+    .click({ timeout: 5000 })
+    .catch(() => {});
 
-  await page.getByRole("button", { name: /Destination country/i }).click({
-    timeout: 20000,
-  });
+  await page.keyboard.press("Escape").catch(() => {});
 
-  await page.getByPlaceholder("Filter countries...").fill("gh");
-  await page.waitForTimeout(1000);
+  /*
+   * Select destination country: Ghana.
+   */
+  const destinationCountryButton = page
+    .getByRole("button")
+    .filter({ hasText: /Destination country|Select destination|Country/i })
+    .first();
 
-  await page.getByRole("option", { name: /GH Ghana/i }).click({
-    timeout: 15000,
-  });
+  if (
+    await destinationCountryButton
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
+  ) {
+    await destinationCountryButton.click({
+      timeout: 15000,
+      force: true,
+    });
+
+    const countrySearch = page
+      .locator(
+        'input[placeholder*="Filter countries" i], ' +
+        'input[placeholder*="Search countries" i], ' +
+        'input[role="combobox"]'
+      )
+      .filter({ visible: true })
+      .last();
+
+    if (
+      await countrySearch
+        .isVisible({ timeout: 5000 })
+        .catch(() => false)
+    ) {
+      await countrySearch.fill("Ghana");
+      await page.waitForTimeout(1000);
+    }
+
+    await page
+      .getByRole("option", { name: /Ghana|GH\s+Ghana/i })
+      .first()
+      .click({
+        timeout: 15000,
+        force: true,
+      })
+      .catch(async () => {
+        await page
+          .getByText(/Ghana/i)
+          .last()
+          .click({
+            timeout: 15000,
+            force: true,
+          });
+      });
+  }
+
+  await page.waitForTimeout(2000);
+
+  /*
+   * Select sending currency: GBP.
+   *
+   * XE commonly defaults to GBP for UK visitors, so do not fail when the
+   * source currency is already GBP.
+   */
+  const visibleTextBeforeCurrencySelection = await page
+    .locator("body")
+    .innerText()
+    .catch(() => "");
+
+  if (!/\bGBP\b[\s\S]{0,40}(British Pound|United Kingdom)/i.test(
+    visibleTextBeforeCurrencySelection
+  )) {
+    const gbpButtonCandidates = [
+      page.getByRole("button", { name: /GBP/i }).first(),
+
+      page
+        .locator("button:visible")
+        .filter({ hasText: /\bGBP\b/ })
+        .first(),
+
+      page
+        .locator('[role="combobox"]:visible')
+        .filter({ hasText: /\bGBP\b|USD|EUR|CAD/i })
+        .first(),
+    ];
+
+    let sourceCurrencyOpened = false;
+
+    for (const candidate of gbpButtonCandidates) {
+      try {
+        if (await candidate.isVisible({ timeout: 2500 })) {
+          await candidate.click({
+            timeout: 10000,
+            force: true,
+          });
+
+          sourceCurrencyOpened = true;
+          break;
+        }
+      } catch (_) {}
+    }
+
+    if (sourceCurrencyOpened) {
+      const currencySearch = page
+        .locator(
+          'input[placeholder*="Search currencies" i], ' +
+          'input[placeholder*="Search currency" i], ' +
+          'input[role="combobox"]:visible'
+        )
+        .last();
+
+      if (
+        await currencySearch
+          .isVisible({ timeout: 4000 })
+          .catch(() => false)
+      ) {
+        await currencySearch.fill("GBP");
+        await page.waitForTimeout(800);
+      }
+
+      await page
+        .getByRole("option", {
+          name: /GBP.*British Pound|British Pound.*GBP/i,
+        })
+        .first()
+        .click({
+          timeout: 12000,
+          force: true,
+        })
+        .catch(async () => {
+          await page
+            .getByText(/GBP.*British Pound|British Pound.*GBP/i)
+            .last()
+            .click({
+              timeout: 12000,
+              force: true,
+            });
+        });
+    }
+  }
 
   await page.waitForTimeout(1500);
 
-  await page.getByRole("button", { name: /GBP GBP/i }).click({
-    timeout: 20000,
-  });
+  /*
+   * Select receiving currency: GHS.
+   */
+  const ghsAlreadySelected = await page
+    .locator("body")
+    .innerText()
+    .then((text) => /\bGHS\b[\s\S]{0,40}(Ghanaian Cedi|Ghana)/i.test(text))
+    .catch(() => false);
 
-  await page.getByRole("option", { name: /GBP GBP British Pound/i }).click({
-    timeout: 15000,
-  }).catch(() => {});
+  if (!ghsAlreadySelected) {
+    const receivingCurrencyCandidates = [
+      page
+        .getByRole("button")
+        .filter({ hasText: /GHS|NGN|USD|EUR|CAD/i })
+        .last(),
 
-  await page.waitForTimeout(1500);
+      page
+        .locator("button:visible")
+        .filter({ hasText: /\bGHS\b|\bNGN\b|\bUSD\b|\bEUR\b/ })
+        .last(),
 
-  await page.getByRole("button", { name: /GHS GHS/i }).click({
-    timeout: 20000,
-  });
+      page
+        .locator('[role="combobox"]:visible')
+        .filter({ hasText: /GHS|NGN|USD|EUR|Select/i })
+        .last(),
+    ];
 
-  const searchBox = page.getByPlaceholder("Search currencies...");
-  await searchBox.waitFor({ timeout: 20000 });
-  await searchBox.fill("gh");
+    let receivingCurrencyOpened = false;
 
-  await page.getByRole("option", { name: /GHS GHS Ghanaian Cedi/i }).click({
-    timeout: 15000,
-  });
+    for (const candidate of receivingCurrencyCandidates) {
+      try {
+        if (await candidate.isVisible({ timeout: 2500 })) {
+          await candidate.click({
+            timeout: 10000,
+            force: true,
+          });
 
-  await page.waitForTimeout(5000);
+          receivingCurrencyOpened = true;
+          break;
+        }
+      } catch (_) {}
+    }
 
-  const bodyText = await page.locator("body").innerText();
+    if (!receivingCurrencyOpened) {
+      const file = await saveScreenshot(page, source.provider);
+      throw new Error(
+        `Could not open XE receiving currency selector. Screenshot: ${file}`
+      );
+    }
+
+    const currencySearch = page
+      .locator(
+        'input[placeholder*="Search currencies" i], ' +
+        'input[placeholder*="Search currency" i], ' +
+        'input[role="combobox"]:visible'
+      )
+      .last();
+
+    if (
+      await currencySearch
+        .isVisible({ timeout: 5000 })
+        .catch(() => false)
+    ) {
+      await currencySearch.fill("GHS");
+      await page.waitForTimeout(1000);
+    }
+
+    await page
+      .getByRole("option", {
+        name: /GHS.*Ghanaian Cedi|Ghanaian Cedi.*GHS/i,
+      })
+      .first()
+      .click({
+        timeout: 15000,
+        force: true,
+      })
+      .catch(async () => {
+        await page
+          .getByText(/GHS.*Ghanaian Cedi|Ghanaian Cedi.*GHS/i)
+          .last()
+          .click({
+            timeout: 15000,
+            force: true,
+          });
+      });
+  }
+
+  await page.waitForTimeout(7000);
+
+  const bodyText = await collectPageText(page);
   saveDebugText(source.provider, bodyText);
 
   let rate = null;
 
   const patterns = [
-    /GBP\s*=\s*([0-9.]+)\s*GHS/i,
-    /1\s*GBP\s*=\s*([0-9.]+)\s*GHS/i,
-    /\b(1[0-9]\.\d{2,6})\b/,
+    /1\s*GBP\s*[=≈]\s*([0-9,.]+)\s*GHS/i,
+    /GBP\s*1\s*[=≈]\s*([0-9,.]+)\s*GHS/i,
+    /GBP\s*[=≈]\s*([0-9,.]+)\s*GHS/i,
+    /([0-9]{2}(?:\.[0-9]{2,6}))\s*GHS/i,
   ];
 
   for (const regex of patterns) {
     const match = bodyText.match(regex);
+
     if (!match) continue;
 
-    const candidate = parseLocaleNumber(match[1] || match[0]);
+    const candidate = parseLocaleNumber(match[1]);
+
     if (candidate && candidate >= 10 && candidate <= 25) {
       rate = Number(candidate.toFixed(6));
       break;
@@ -1092,10 +1295,17 @@ async function handleXE(page, source) {
 
   if (!rate) {
     const file = await saveScreenshot(page, source.provider);
-    throw new Error(`Could not extract XE rate. Screenshot: ${file}`);
+
+    throw new Error(
+      `Could not extract XE GBP/GHS rate. ` +
+      `Captured text: ${bodyText.replace(/\s+/g, " ").slice(0, 700)}. ` +
+      `Screenshot: ${file}`
+    );
   }
 
-  return buildResult(source, rate, 0, rate);
+  return buildResult(source, rate, 0, rate, {
+    verified_method: "xe_visible_rate_text",
+  });
 }
 
 async function handlePandaRemit(page, source) {
