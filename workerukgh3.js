@@ -1022,290 +1022,398 @@ async function handleMukuru(page, source) {
 }
 
 async function handleXE(page, source) {
-  await page.goto("https://www.xe.com/send-money/", {
+  await page.goto("https://www.xe.com/", {
     waitUntil: "domcontentloaded",
     timeout: 60000,
   });
 
   await page.waitForTimeout(7000);
 
-  // Accept cookies if displayed.
+  /*
+   * Close or accept the cookie banner.
+   */
   await page
-    .getByRole("button", { name: /Accept|Accept all|Allow all/i })
-    .first()
-    .click({ timeout: 5000 })
+    .getByRole("button", { name: "Accept", exact: true })
+    .click({
+      timeout: 8000,
+      force: true,
+    })
     .catch(() => {});
 
   await page.keyboard.press("Escape").catch(() => {});
 
   /*
-   * Select destination country: Ghana.
+   * Open XE Send Money.
    */
-  const destinationCountryButton = page
-    .getByRole("button")
-    .filter({ hasText: /Destination country|Select destination|Country/i })
-    .first();
+  const sendLinks = page.getByRole("link", {
+    name: "Send",
+    exact: true,
+  });
 
-  if (
-    await destinationCountryButton
-      .isVisible({ timeout: 5000 })
-      .catch(() => false)
-  ) {
-    await destinationCountryButton.click({
-      timeout: 15000,
-      force: true,
-    });
+  const sendLinkCount = await sendLinks.count();
 
-    const countrySearch = page
-      .locator(
-        'input[placeholder*="Filter countries" i], ' +
-        'input[placeholder*="Search countries" i], ' +
-        'input[role="combobox"]'
-      )
-      .filter({ visible: true })
-      .last();
+  if (!sendLinkCount) {
+    const file = await saveScreenshot(
+      page,
+      source.provider
+    );
 
-    if (
-      await countrySearch
-        .isVisible({ timeout: 5000 })
-        .catch(() => false)
-    ) {
-      await countrySearch.fill("Ghana");
-      await page.waitForTimeout(1000);
-    }
-
-    await page
-      .getByRole("option", { name: /Ghana|GH\s+Ghana/i })
-      .first()
-      .click({
-        timeout: 15000,
-        force: true,
-      })
-      .catch(async () => {
-        await page
-          .getByText(/Ghana/i)
-          .last()
-          .click({
-            timeout: 15000,
-            force: true,
-          });
-      });
+    throw new Error(
+      `XE Send link was not found. Screenshot: ${file}`
+    );
   }
 
-  await page.waitForTimeout(2000);
+  /*
+   * The latest recording uses nth(1).
+   */
+  const sendLink =
+    sendLinkCount > 1
+      ? sendLinks.nth(1)
+      : sendLinks.first();
+
+  await sendLink.click({
+    timeout: 15000,
+    force: true,
+  });
+
+  await page.waitForTimeout(6000);
 
   /*
-   * Select sending currency: GBP.
-   *
-   * XE commonly defaults to GBP for UK visitors, so do not fail when the
-   * source currency is already GBP.
+   * STEP 1:
+   * Select United Kingdom in the destination-country selector.
    */
-  const visibleTextBeforeCurrencySelection = await page
-    .locator("body")
-    .innerText()
-    .catch(() => "");
-
-  if (!/\bGBP\b[\s\S]{0,40}(British Pound|United Kingdom)/i.test(
-    visibleTextBeforeCurrencySelection
-  )) {
-    const gbpButtonCandidates = [
-      page.getByRole("button", { name: /GBP/i }).first(),
-
-      page
-        .locator("button:visible")
-        .filter({ hasText: /\bGBP\b/ })
-        .first(),
-
-      page
-        .locator('[role="combobox"]:visible')
-        .filter({ hasText: /\bGBP\b|USD|EUR|CAD/i })
-        .first(),
-    ];
-
-    let sourceCurrencyOpened = false;
-
-    for (const candidate of gbpButtonCandidates) {
-      try {
-        if (await candidate.isVisible({ timeout: 2500 })) {
-          await candidate.click({
-            timeout: 10000,
-            force: true,
-          });
-
-          sourceCurrencyOpened = true;
-          break;
-        }
-      } catch (_) {}
+  const destinationButton = page.getByRole(
+    "button",
+    {
+      name: "Destination country",
+      exact: true,
     }
+  );
 
-    if (sourceCurrencyOpened) {
-      const currencySearch = page
-        .locator(
-          'input[placeholder*="Search currencies" i], ' +
-          'input[placeholder*="Search currency" i], ' +
-          'input[role="combobox"]:visible'
-        )
+  await destinationButton.waitFor({
+    state: "visible",
+    timeout: 20000,
+  });
+
+  await destinationButton.click({
+    timeout: 15000,
+    force: true,
+  });
+
+  await page.waitForTimeout(1000);
+
+  /*
+   * XE may recreate the search input.
+   * Obtain a fresh locator for each retry.
+   */
+  let countrySearchCompleted = false;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const countrySearch = page
+        .getByPlaceholder("Filter countries...")
         .last();
 
-      if (
-        await currencySearch
-          .isVisible({ timeout: 4000 })
-          .catch(() => false)
-      ) {
-        await currencySearch.fill("GBP");
-        await page.waitForTimeout(800);
-      }
+      await countrySearch.waitFor({
+        state: "visible",
+        timeout: 5000,
+      });
 
-      await page
-        .getByRole("option", {
-          name: /GBP.*British Pound|British Pound.*GBP/i,
-        })
-        .first()
-        .click({
-          timeout: 12000,
-          force: true,
-        })
-        .catch(async () => {
-          await page
-            .getByText(/GBP.*British Pound|British Pound.*GBP/i)
-            .last()
-            .click({
-              timeout: 12000,
-              force: true,
-            });
-        });
+      await countrySearch.fill("gb", {
+        timeout: 5000,
+      });
+
+      countrySearchCompleted = true;
+      break;
+    } catch (_) {
+      await page.waitForTimeout(700);
     }
   }
 
-  await page.waitForTimeout(1500);
+  if (!countrySearchCompleted) {
+    await page.keyboard.type("gb", {
+      delay: 100,
+    });
+  }
+
+  await page.waitForTimeout(1200);
+
+  const ukOption = page.getByRole("option", {
+    name: "GB United Kingdom",
+    exact: true,
+  });
+
+  await ukOption.waitFor({
+    state: "visible",
+    timeout: 15000,
+  });
+
+  await ukOption.click({
+    timeout: 15000,
+    force: true,
+  });
+
+  await page.waitForTimeout(3000);
 
   /*
-   * Select receiving currency: GHS.
+   * STEP 2:
+   * Change sending currency from USD to GBP.
    */
-  const ghsAlreadySelected = await page
-    .locator("body")
-    .innerText()
-    .then((text) => /\bGHS\b[\s\S]{0,40}(Ghanaian Cedi|Ghana)/i.test(text))
-    .catch(() => false);
+  const sendingCurrencyCandidates = [
+    page.getByRole("button", {
+      name: "USD USD",
+      exact: true,
+    }),
 
-  if (!ghsAlreadySelected) {
-    const receivingCurrencyCandidates = [
-      page
-        .getByRole("button")
-        .filter({ hasText: /GHS|NGN|USD|EUR|CAD/i })
-        .last(),
+    page.getByRole("button", {
+      name: /USD\s+USD/i,
+    }),
 
-      page
-        .locator("button:visible")
-        .filter({ hasText: /\bGHS\b|\bNGN\b|\bUSD\b|\bEUR\b/ })
-        .last(),
-
-      page
-        .locator('[role="combobox"]:visible')
-        .filter({ hasText: /GHS|NGN|USD|EUR|Select/i })
-        .last(),
-    ];
-
-    let receivingCurrencyOpened = false;
-
-    for (const candidate of receivingCurrencyCandidates) {
-      try {
-        if (await candidate.isVisible({ timeout: 2500 })) {
-          await candidate.click({
-            timeout: 10000,
-            force: true,
-          });
-
-          receivingCurrencyOpened = true;
-          break;
-        }
-      } catch (_) {}
-    }
-
-    if (!receivingCurrencyOpened) {
-      const file = await saveScreenshot(page, source.provider);
-      throw new Error(
-        `Could not open XE receiving currency selector. Screenshot: ${file}`
-      );
-    }
-
-    const currencySearch = page
-      .locator(
-        'input[placeholder*="Search currencies" i], ' +
-        'input[placeholder*="Search currency" i], ' +
-        'input[role="combobox"]:visible'
-      )
-      .last();
-
-    if (
-      await currencySearch
-        .isVisible({ timeout: 5000 })
-        .catch(() => false)
-    ) {
-      await currencySearch.fill("GHS");
-      await page.waitForTimeout(1000);
-    }
-
-    await page
-      .getByRole("option", {
-        name: /GHS.*Ghanaian Cedi|Ghanaian Cedi.*GHS/i,
-      })
-      .first()
-      .click({
-        timeout: 15000,
-        force: true,
-      })
-      .catch(async () => {
-        await page
-          .getByText(/GHS.*Ghanaian Cedi|Ghanaian Cedi.*GHS/i)
-          .last()
-          .click({
-            timeout: 15000,
-            force: true,
-          });
-      });
-  }
-
-  await page.waitForTimeout(7000);
-
-  const bodyText = await collectPageText(page);
-  saveDebugText(source.provider, bodyText);
-
-  let rate = null;
-
-  const patterns = [
-    /1\s*GBP\s*[=≈]\s*([0-9,.]+)\s*GHS/i,
-    /GBP\s*1\s*[=≈]\s*([0-9,.]+)\s*GHS/i,
-    /GBP\s*[=≈]\s*([0-9,.]+)\s*GHS/i,
-    /([0-9]{2}(?:\.[0-9]{2,6}))\s*GHS/i,
+    page
+      .locator("button:visible")
+      .filter({
+        hasText: /^USD\s+USD$/,
+      }),
   ];
 
-  for (const regex of patterns) {
-    const match = bodyText.match(regex);
+  let sendingCurrencyButton = null;
 
-    if (!match) continue;
+  for (const candidate of sendingCurrencyCandidates) {
+    const first = candidate.first();
 
-    const candidate = parseLocaleNumber(match[1]);
-
-    if (candidate && candidate >= 10 && candidate <= 25) {
-      rate = Number(candidate.toFixed(6));
+    if (
+      await first
+        .isVisible({ timeout: 3000 })
+        .catch(() => false)
+    ) {
+      sendingCurrencyButton = first;
       break;
     }
   }
 
-  if (!rate) {
-    const file = await saveScreenshot(page, source.provider);
+  /*
+   * XE may already default to GBP for the UK corridor.
+   */
+  if (!sendingCurrencyButton) {
+    const existingGbpButton = page
+      .getByRole("button", {
+        name: /GBP\s+GBP/i,
+      })
+      .first();
+
+    if (
+      await existingGbpButton
+        .isVisible({ timeout: 3000 })
+        .catch(() => false)
+    ) {
+      sendingCurrencyButton = null;
+    } else {
+      const file = await saveScreenshot(
+        page,
+        source.provider
+      );
+
+      throw new Error(
+        `XE sending-currency selector was not found. Screenshot: ${file}`
+      );
+    }
+  }
+
+  if (sendingCurrencyButton) {
+    await sendingCurrencyButton.click({
+      timeout: 15000,
+      force: true,
+    });
+
+    await page.waitForTimeout(800);
+
+    let currencySearchCompleted = false;
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const currencySearch = page
+          .getByPlaceholder("Search currencies...")
+          .last();
+
+        await currencySearch.waitFor({
+          state: "visible",
+          timeout: 5000,
+        });
+
+        await currencySearch.fill("gb", {
+          timeout: 5000,
+        });
+
+        currencySearchCompleted = true;
+        break;
+      } catch (_) {
+        await page.waitForTimeout(700);
+      }
+    }
+
+    if (!currencySearchCompleted) {
+      await page.keyboard.type("gb", {
+        delay: 100,
+      });
+    }
+
+    await page.waitForTimeout(1000);
+
+    const gbpOption = page.getByRole("option", {
+      name: "GBP GBP British Pound",
+      exact: true,
+    });
+
+    await gbpOption.waitFor({
+      state: "visible",
+      timeout: 15000,
+    });
+
+    await gbpOption.click({
+      timeout: 15000,
+      force: true,
+    });
+  }
+
+  await page.waitForTimeout(2500);
+
+  /*
+   * STEP 3:
+   * Open the receiving-currency selector using its stable ID.
+   */
+  const receivingCurrency = page.locator(
+    "#receiving-currency"
+  );
+
+  await receivingCurrency.waitFor({
+    state: "visible",
+    timeout: 20000,
+  });
+
+  await receivingCurrency.click({
+    timeout: 15000,
+    force: true,
+  });
+
+  await page.waitForTimeout(800);
+
+  let receivingSearchCompleted = false;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const receivingSearch = page
+        .getByPlaceholder("Search currencies...")
+        .last();
+
+      await receivingSearch.waitFor({
+        state: "visible",
+        timeout: 5000,
+      });
+
+      await receivingSearch.fill("gh", {
+        timeout: 5000,
+      });
+
+      receivingSearchCompleted = true;
+      break;
+    } catch (_) {
+      await page.waitForTimeout(700);
+    }
+  }
+
+  if (!receivingSearchCompleted) {
+    await page.keyboard.type("gh", {
+      delay: 100,
+    });
+  }
+
+  await page.waitForTimeout(1000);
+
+  const ghsOption = page.getByRole("option", {
+    name: "GHS GHS Ghanaian Cedi",
+    exact: true,
+  });
+
+  await ghsOption.waitFor({
+    state: "visible",
+    timeout: 15000,
+  });
+
+  await ghsOption.click({
+    timeout: 15000,
+    force: true,
+  });
+
+  await page.waitForTimeout(7000);
+
+  /*
+   * STEP 4:
+   * Read the GBP/GHS rate instead of clicking it.
+   */
+  const rateLocator = page
+    .getByText(
+      /GBP\s*=\s*[0-9]+(?:\.[0-9]+)?\s*GHS/i
+    )
+    .first();
+
+  const directRateText = await rateLocator
+    .innerText()
+    .catch(() => "");
+
+  const bodyText = await page
+    .locator("body")
+    .innerText()
+    .catch(() => "");
+
+  const combinedText = [
+    directRateText,
+    bodyText,
+  ].join("\n");
+
+  saveDebugText(
+    source.provider,
+    combinedText
+  );
+
+  const match = combinedText.match(
+    /(?:1\s*)?GBP\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*GHS/i
+  );
+
+  const rate = match
+    ? parseLocaleNumber(match[1])
+    : null;
+
+  if (
+    !rate ||
+    rate < 10 ||
+    rate > 25
+  ) {
+    const file = await saveScreenshot(
+      page,
+      source.provider
+    );
 
     throw new Error(
       `Could not extract XE GBP/GHS rate. ` +
-      `Captured text: ${bodyText.replace(/\s+/g, " ").slice(0, 700)}. ` +
+      `Captured text: ${combinedText
+        .replace(/\s+/g, " ")
+        .slice(0, 500)}. ` +
       `Screenshot: ${file}`
     );
   }
 
-  return buildResult(source, rate, 0, rate, {
-    verified_method: "xe_visible_rate_text",
-  });
+  console.log(`XE extracted rate: ${rate}`);
+
+  return buildResult(
+    source,
+    rate,
+    0,
+    rate,
+    {
+      verified_method:
+        "xe_uk_destination_gbp_ghs_rate",
+    }
+  );
 }
 
 async function handlePandaRemit(page, source) {
